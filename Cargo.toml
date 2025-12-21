@@ -23,6 +23,7 @@ tonic-prost = "0.14.2"
 tokio = { version = "1.48.0", features = ["macros"] }
 
 [features]
-default = ["unix-transport", "custom-transport"]
-unix-transport = ["dep:tokio", "hyper-util/tokio"]
-custom-transport = ["hyper-util/tokio"]
+default = ["custom-connector", "unix-connector"]
+_connector = []
+unix-connector = ["_connector", "dep:tokio", "hyper-util/tokio"]
+custom-connector = ["_connector", "hyper-util/tokio"]

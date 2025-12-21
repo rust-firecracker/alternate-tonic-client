@@ -1,3 +1,3 @@
 pub mod channel;
-mod connector;
-mod stream;
+pub mod connector;
+pub mod stream;
