@@ -23,7 +23,6 @@ default = [
     "unix-transport",
     "custom-transport",
     "singleton-channel",
-
     "pooled-channel",
 ]
 _transport = []
@@ -34,6 +33,7 @@ singleton-channel = [
     "_channel",
     "tower/reconnect",
     "tower/buffer",
+    "tower/timeout",
     "hyper/client",
     "hyper/http2",
     "hyper-util/tokio",

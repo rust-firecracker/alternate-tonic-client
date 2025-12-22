@@ -1,7 +1,4 @@
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 
 use http::{Request, Response};
 use hyper::body::Incoming;
@@ -9,7 +6,10 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use tonic::body::Body;
 use tower::{BoxError, Service};
 
-use crate::{GrpcConnector, channel::set_request_uri_scheme_and_authority};
+use crate::{
+    GrpcConnector,
+    channel::{BoxResponseFuture, set_request_uri_scheme_and_authority},
+};
 
 pub struct PooledGrpcChannelBuilder {}
 
@@ -37,7 +37,7 @@ impl Service<Request<Body>> for PooledGrpcChannel {
 
     type Error = BoxError;
 
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+    type Future = BoxResponseFuture;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.client.poll_ready(cx).map_err(|err| Box::new(err) as BoxError)

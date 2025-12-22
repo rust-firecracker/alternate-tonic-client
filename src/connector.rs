@@ -1,12 +1,9 @@
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 
 use http::Uri;
 use tower::{BoxError, Service};
 
-use crate::stream::GrpcStream;
+use crate::{BoxFuture, stream::GrpcStream};
 
 #[derive(Debug, Clone)]
 pub struct GrpcConnector {
@@ -35,7 +32,7 @@ impl Service<Uri> for GrpcConnector {
 
     type Error = BoxError;
 
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+    type Future = BoxFuture<GrpcStream>;
 
     fn poll_ready(
         &mut self,

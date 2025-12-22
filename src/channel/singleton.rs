@@ -1,18 +1,21 @@
 use std::{
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use http::{Request, Response};
 use hyper::body::Incoming;
+use hyper_util::rt::TokioExecutor;
 use tonic::body::Body;
 use tower::{
-    BoxError, Service,
-    buffer::Buffer,
-    reconnect::{Reconnect, ResponseFuture},
+    BoxError, Service, ServiceBuilder, buffer::Buffer, reconnect::Reconnect, timeout::TimeoutLayer,
+    util::BoxCloneSyncService,
 };
 
 use crate::{GrpcConnector, channel::set_request_uri_scheme_and_authority};
+
+type Http2ConnectionBuilder = hyper::client::conn::http2::Builder<TokioExecutor>;
 
 #[derive(Clone)]
 struct SingletonService {
@@ -46,6 +49,7 @@ impl tower::Service<Request<Body>> for SingletonService {
 
 struct SingletonConnectService {
     connector: GrpcConnector,
+    connection_builder: Http2ConnectionBuilder,
 }
 
 impl tower::Service<()> for SingletonConnectService {
@@ -61,13 +65,11 @@ impl tower::Service<()> for SingletonConnectService {
 
     fn call(&mut self, _: ()) -> Self::Future {
         let mut connector = self.connector.clone();
+        let connection_builder = self.connection_builder.clone();
 
         Box::pin(async move {
             let stream = connector.call(http::Uri::from_static("http://localhost")).await?;
-
-            let (send_request, connection) =
-                hyper::client::conn::http2::handshake::<_, _, Body>(hyper_util::rt::TokioExecutor::new(), stream)
-                    .await?;
+            let (send_request, connection) = connection_builder.handshake(stream).await?;
 
             tokio::task::spawn(connection);
 
@@ -78,26 +80,48 @@ impl tower::Service<()> for SingletonConnectService {
 
 pub struct SingletonGrpcChannelBuilder {
     buffer_size: usize,
+    connection_builder: Http2ConnectionBuilder,
+    timeout: Option<Duration>,
 }
 
 impl SingletonGrpcChannelBuilder {
     pub fn new(buffer_size: usize) -> Self {
-        Self { buffer_size }
+        Self {
+            buffer_size,
+            connection_builder: Http2ConnectionBuilder::new(TokioExecutor::new()),
+            timeout: None,
+        }
+    }
+
+    pub fn configure_http2_connection<F: FnOnce(&mut Http2ConnectionBuilder)>(mut self, function: F) -> Self {
+        function(&mut self.connection_builder);
+        self
+    }
+
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
     }
 
     pub fn build(self, connector: GrpcConnector) -> SingletonGrpcChannel {
-        let service = Reconnect::new(SingletonConnectService { connector }, ());
-        let buffer = Buffer::new(service, self.buffer_size);
+        let service = ServiceBuilder::new()
+            .option_layer(self.timeout.map(TimeoutLayer::new))
+            .service(Reconnect::new(
+                SingletonConnectService {
+                    connector,
+                    connection_builder: self.connection_builder,
+                },
+                (),
+            ));
+
+        let buffer = BoxCloneSyncService::new(Buffer::new(service, self.buffer_size));
 
         SingletonGrpcChannel { buffer }
     }
 }
 
 pub struct SingletonGrpcChannel {
-    buffer: Buffer<
-        Request<Body>,
-        ResponseFuture<Pin<Box<dyn Future<Output = Result<Response<Incoming>, BoxError>> + Send + 'static>>, BoxError>,
-    >,
+    buffer: BoxCloneSyncService<Request<Body>, Response<Incoming>, BoxError>,
 }
 
 impl Service<Request<Body>> for SingletonGrpcChannel {
@@ -112,6 +136,6 @@ impl Service<Request<Body>> for SingletonGrpcChannel {
     }
 
     fn call(&mut self, request: Request<Body>) -> Self::Future {
-        Box::pin(self.buffer.call(request))
+        self.buffer.call(request)
     }
 }
