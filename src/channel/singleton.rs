@@ -86,6 +86,7 @@ impl tower::Service<()> for SingletonConnectService {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SingletonGrpcChannelBuilder {
     buffer_size: usize,
     connection_builder: Http2ConnectionBuilder,
@@ -129,6 +130,7 @@ impl SingletonGrpcChannelBuilder {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SingletonGrpcChannel {
     buffer: BoxCloneSyncService<Request<Body>, Response<Incoming>, BoxError>,
 }

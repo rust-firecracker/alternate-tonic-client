@@ -4,6 +4,7 @@ use std::{
 };
 
 use hyper::rt::{Read, Write};
+#[cfg(feature = "pooled-channel")]
 use hyper_util::client::legacy::connect::{Connected, Connection};
 
 #[cfg(feature = "custom-transport")]
@@ -52,7 +53,7 @@ impl Read for GrpcStream {
         #[cfg_attr(not(feature = "_transport"), allow(unused))] buf: hyper::rt::ReadBufCursor<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         #[cfg(not(feature = "_transport"))]
-        panic!("pooled-tonic-client crate had no enabled connector feature at runtime");
+        panic!("alternate-tonic-client crate had no transport feature enabled at runtime");
 
         #[cfg(feature = "_transport")]
         match &mut self.get_mut().inner {
@@ -71,7 +72,7 @@ impl Write for GrpcStream {
         #[cfg_attr(not(feature = "_transport"), allow(unused))] buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         #[cfg(not(feature = "_transport"))]
-        panic!("pooled-tonic-client crate had no enabled connector feature at runtime");
+        panic!("alternate-tonic-client crate had no transport feature enabled at runtime");
 
         #[cfg(feature = "_transport")]
         match &mut self.get_mut().inner {
@@ -86,8 +87,8 @@ impl Write for GrpcStream {
         self: Pin<&mut Self>,
         #[cfg_attr(not(feature = "_transport"), allow(unused))] cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        #[cfg(not(any(feature = "unix-transport", feature = "custom-transport")))]
-        panic!("pooled-tonic-client crate had no enabled connector feature at runtime");
+        #[cfg(not(feature = "_transport"))]
+        panic!("alternate-tonic-client crate had no transport feature enabled at runtime");
 
         #[cfg(feature = "_transport")]
         match &mut self.get_mut().inner {
@@ -102,8 +103,8 @@ impl Write for GrpcStream {
         self: Pin<&mut Self>,
         #[cfg_attr(not(feature = "_transport"), allow(unused))] cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        #[cfg(not(any(feature = "unix-transport", feature = "custom-transport")))]
-        panic!("pooled-tonic-client crate had no enabled connector feature at runtime");
+        #[cfg(not(feature = "_transport"))]
+        panic!("alternate-tonic-client crate had no transport feature enabled at runtime");
 
         #[cfg(feature = "_transport")]
         match &mut self.get_mut().inner {
@@ -115,6 +116,7 @@ impl Write for GrpcStream {
     }
 }
 
+#[cfg(feature = "pooled-channel")]
 impl Connection for GrpcStream {
     fn connected(&self) -> Connected {
         Connected::new()

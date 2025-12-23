@@ -1,5 +1,4 @@
 use std::{
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -27,7 +26,7 @@ impl GrpcConnectorBuilder {
 
     #[cfg(feature = "unix-transport")]
     pub fn build_to_unix_socket<P: Into<std::path::PathBuf>>(self, socket_path: P) -> GrpcConnector {
-        self.build(GrpcConnectorInner::Unix(Arc::new(socket_path.into())))
+        self.build(GrpcConnectorInner::Unix(std::sync::Arc::new(socket_path.into())))
     }
 
     #[cfg(feature = "custom-transport")]
@@ -53,6 +52,7 @@ impl GrpcConnectorBuilder {
 #[derive(Debug, Clone)]
 pub struct GrpcConnector {
     inner: GrpcConnectorInner,
+    #[cfg_attr(not(feature = "_transport"), allow(unused))]
     timeout: Option<Duration>,
 }
 
@@ -73,7 +73,7 @@ impl Service<Uri> for GrpcConnector {
 
     fn poll_ready(
         &mut self,
-        #[cfg_attr(not(feature = "_transport"), allow(unused))] cx: &mut Context<'_>,
+        #[cfg_attr(not(feature = "custom-transport"), allow(unused))] cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         match self.inner {
             #[cfg(feature = "unix-transport")]
@@ -83,29 +83,35 @@ impl Service<Uri> for GrpcConnector {
         }
     }
 
-    fn call(&mut self, #[cfg_attr(not(feature = "_transport"), allow(unused))] uri: Uri) -> Self::Future {
-        let future = match self.inner {
-            #[cfg(feature = "unix-transport")]
-            GrpcConnectorInner::Unix(ref socket_path) => {
-                let socket_path = socket_path.clone();
+    fn call(&mut self, #[cfg_attr(not(feature = "custom-transport"), allow(unused))] uri: Uri) -> Self::Future {
+        #[cfg(not(feature = "_transport"))]
+        panic!("alternate-tonic-client crate had no transport feature enabled at runtime");
 
-                Box::pin(async move {
-                    let stream = tokio::net::UnixStream::connect(socket_path.as_ref()).await?;
-                    Ok(GrpcStream::unix(stream))
-                })
+        #[cfg(feature = "_transport")]
+        {
+            let future = match self.inner {
+                #[cfg(feature = "unix-transport")]
+                GrpcConnectorInner::Unix(ref socket_path) => {
+                    let socket_path = socket_path.clone();
+
+                    Box::pin(async move {
+                        let stream = tokio::net::UnixStream::connect(socket_path.as_ref()).await?;
+                        Ok(GrpcStream::unix(stream))
+                    })
+                }
+                #[cfg(feature = "custom-transport")]
+                GrpcConnectorInner::Custom(ref mut service) => service.call(uri),
+            };
+
+            match self.timeout {
+                Some(timeout) => Box::pin(async move {
+                    tokio::time::timeout(timeout, future)
+                        .await
+                        .map_err(|err| Box::new(err) as BoxError)
+                        .flatten()
+                }),
+                None => future,
             }
-            #[cfg(feature = "custom-transport")]
-            GrpcConnectorInner::Custom(ref mut service) => service.call(uri),
-        };
-
-        match self.timeout {
-            Some(timeout) => Box::pin(async move {
-                tokio::time::timeout(timeout, future)
-                    .await
-                    .map_err(|err| Box::new(err) as BoxError)
-                    .flatten()
-            }),
-            None => future,
         }
     }
 }

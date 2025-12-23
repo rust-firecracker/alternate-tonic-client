@@ -3,17 +3,12 @@ mod pooled;
 #[cfg(feature = "singleton-channel")]
 mod singleton;
 
-use http::{Request, Response, Uri};
-use hyper::body::Incoming;
+use http::{Request, Uri};
 #[cfg(feature = "pooled-channel")]
 pub use pooled::{PooledGrpcChannel, PooledGrpcChannelBuilder};
 #[cfg(feature = "singleton-channel")]
 pub use singleton::{SingletonGrpcChannel, SingletonGrpcChannelBuilder};
 use tonic::body::Body;
-
-use crate::BoxFuture;
-
-type BoxResponseFuture = BoxFuture<Response<Incoming>>;
 
 fn set_request_uri_scheme_and_authority(request: &mut Request<Body>) {
     *request.uri_mut() = Uri::builder()
