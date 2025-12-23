@@ -20,6 +20,7 @@ type Http2ConnectionBuilder = hyper::client::conn::http2::Builder<TokioExecutor>
 #[derive(Clone)]
 struct SingletonService {
     send_request: hyper::client::conn::http2::SendRequest<Body>,
+    timeout: Option<Duration>,
 }
 
 impl tower::Service<Request<Body>> for SingletonService {
@@ -39,17 +40,23 @@ impl tower::Service<Request<Body>> for SingletonService {
         set_request_uri_scheme_and_authority(&mut request);
         let future = self.send_request.send_request(request);
 
-        Box::pin(async {
-            future
-                .await
-                .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
-        })
+        match self.timeout {
+            Some(timeout) => Box::pin(async move {
+                match tokio::time::timeout(timeout, future).await {
+                    Ok(Ok(response)) => Ok(response),
+                    Ok(Err(err)) => Err(Box::new(err) as BoxError),
+                    Err(err) => Err(Box::new(err) as BoxError),
+                }
+            }),
+            None => Box::pin(async move { future.await.map_err(|err| Box::new(err) as BoxError) }),
+        }
     }
 }
 
 struct SingletonConnectService {
     connector: GrpcConnector,
     connection_builder: Http2ConnectionBuilder,
+    timeout: Option<Duration>,
 }
 
 impl tower::Service<()> for SingletonConnectService {
@@ -66,6 +73,7 @@ impl tower::Service<()> for SingletonConnectService {
     fn call(&mut self, _: ()) -> Self::Future {
         let mut connector = self.connector.clone();
         let connection_builder = self.connection_builder.clone();
+        let timeout = self.timeout;
 
         Box::pin(async move {
             let stream = connector.call(http::Uri::from_static("http://localhost")).await?;
@@ -73,7 +81,7 @@ impl tower::Service<()> for SingletonConnectService {
 
             tokio::task::spawn(connection);
 
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(SingletonService { send_request })
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(SingletonService { send_request, timeout })
         })
     }
 }
@@ -110,6 +118,7 @@ impl SingletonGrpcChannelBuilder {
                 SingletonConnectService {
                     connector,
                     connection_builder: self.connection_builder,
+                    timeout: self.timeout,
                 },
                 (),
             ));

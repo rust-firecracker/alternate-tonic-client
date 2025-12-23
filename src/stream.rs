@@ -17,6 +17,13 @@ pub struct GrpcStream {
     inner: GrpcStreamInner,
 }
 
+enum GrpcStreamInner {
+    #[cfg(feature = "unix-transport")]
+    Unix(hyper_util::rt::tokio::WithHyperIo<tokio::net::UnixStream>),
+    #[cfg(feature = "custom-transport")]
+    Custom(Box<dyn HyperIo>),
+}
+
 impl GrpcStream {
     #[cfg(feature = "custom-transport")]
     pub fn wrap_hyper_io<IO: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static>(io: IO) -> Self {
@@ -36,13 +43,6 @@ impl GrpcStream {
             inner: GrpcStreamInner::Unix(hyper_util::rt::tokio::WithHyperIo::new(stream)),
         }
     }
-}
-
-enum GrpcStreamInner {
-    #[cfg(feature = "unix-transport")]
-    Unix(hyper_util::rt::tokio::WithHyperIo<tokio::net::UnixStream>),
-    #[cfg(feature = "custom-transport")]
-    Custom(Box<dyn HyperIo>),
 }
 
 impl Read for GrpcStream {

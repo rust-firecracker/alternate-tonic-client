@@ -1,13 +1,59 @@
-use std::task::{Context, Poll};
+use std::{
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use http::Uri;
 use tower::{BoxError, Service};
 
 use crate::{BoxFuture, stream::GrpcStream};
 
+pub struct GrpcConnectorBuilder {
+    timeout: Option<Duration>,
+}
+
+impl GrpcConnectorBuilder {
+    pub fn new() -> Self {
+        Self { timeout: None }
+    }
+}
+
+impl GrpcConnectorBuilder {
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    #[cfg(feature = "unix-transport")]
+    pub fn build_to_unix_socket<P: Into<std::path::PathBuf>>(self, socket_path: P) -> GrpcConnector {
+        self.build(GrpcConnectorInner::Unix(Arc::new(socket_path.into())))
+    }
+
+    #[cfg(feature = "custom-transport")]
+    pub fn build_custom<S>(self, service: S) -> GrpcConnector
+    where
+        S: Service<Uri, Response = GrpcStream, Error = BoxError> + Send + Sync + Clone + 'static,
+        S::Future: Send,
+    {
+        self.build(GrpcConnectorInner::Custom(tower::util::BoxCloneSyncService::new(
+            service,
+        )))
+    }
+
+    #[cfg(feature = "_transport")]
+    fn build(self, inner: GrpcConnectorInner) -> GrpcConnector {
+        GrpcConnector {
+            inner,
+            timeout: self.timeout,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GrpcConnector {
     inner: GrpcConnectorInner,
+    timeout: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -16,15 +62,6 @@ enum GrpcConnectorInner {
     Unix(std::sync::Arc<std::path::PathBuf>),
     #[cfg(feature = "custom-transport")]
     Custom(tower::util::BoxCloneSyncService<Uri, GrpcStream, BoxError>),
-}
-
-impl GrpcConnector {
-    #[cfg(feature = "unix-transport")]
-    pub fn to_unix_socket<P: Into<std::path::PathBuf>>(socket_path: P) -> GrpcConnector {
-        GrpcConnector {
-            inner: GrpcConnectorInner::Unix(std::sync::Arc::new(socket_path.into())),
-        }
-    }
 }
 
 impl Service<Uri> for GrpcConnector {
@@ -47,7 +84,7 @@ impl Service<Uri> for GrpcConnector {
     }
 
     fn call(&mut self, #[cfg_attr(not(feature = "_transport"), allow(unused))] uri: Uri) -> Self::Future {
-        match self.inner {
+        let future = match self.inner {
             #[cfg(feature = "unix-transport")]
             GrpcConnectorInner::Unix(ref socket_path) => {
                 let socket_path = socket_path.clone();
@@ -59,6 +96,16 @@ impl Service<Uri> for GrpcConnector {
             }
             #[cfg(feature = "custom-transport")]
             GrpcConnectorInner::Custom(ref mut service) => service.call(uri),
+        };
+
+        match self.timeout {
+            Some(timeout) => Box::pin(async move {
+                tokio::time::timeout(timeout, future)
+                    .await
+                    .map_err(|err| Box::new(err) as BoxError)
+                    .flatten()
+            }),
+            None => future,
         }
     }
 }
