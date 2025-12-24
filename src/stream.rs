@@ -21,6 +21,8 @@ pub struct GrpcStream {
 enum GrpcStreamInner {
     #[cfg(feature = "unix-transport")]
     Unix(hyper_util::rt::tokio::WithHyperIo<tokio::net::UnixStream>),
+    #[cfg(feature = "vsock-transport")]
+    Vsock(hyper_util::rt::tokio::WithHyperIo<tokio_vsock::VsockStream>),
     #[cfg(feature = "custom-transport")]
     Custom(Box<dyn HyperIo>),
 }
@@ -44,6 +46,13 @@ impl GrpcStream {
             inner: GrpcStreamInner::Unix(hyper_util::rt::tokio::WithHyperIo::new(stream)),
         }
     }
+
+    #[cfg(feature = "vsock-transport")]
+    pub(crate) fn vsock(stream: tokio_vsock::VsockStream) -> Self {
+        Self {
+            inner: GrpcStreamInner::Vsock(hyper_util::rt::tokio::WithHyperIo::new(stream)),
+        }
+    }
 }
 
 impl Read for GrpcStream {
@@ -59,6 +68,8 @@ impl Read for GrpcStream {
         match &mut self.get_mut().inner {
             #[cfg(feature = "unix-transport")]
             GrpcStreamInner::Unix(stream) => Pin::new(stream).poll_read(cx, buf),
+            #[cfg(feature = "vsock-transport")]
+            GrpcStreamInner::Vsock(stream) => Pin::new(stream).poll_read(cx, buf),
             #[cfg(feature = "custom-transport")]
             GrpcStreamInner::Custom(stream) => Pin::new(stream).poll_read(cx, buf),
         }
@@ -78,6 +89,8 @@ impl Write for GrpcStream {
         match &mut self.get_mut().inner {
             #[cfg(feature = "unix-transport")]
             GrpcStreamInner::Unix(stream) => Pin::new(stream).poll_write(cx, buf),
+            #[cfg(feature = "vsock-transport")]
+            GrpcStreamInner::Vsock(stream) => Pin::new(stream).poll_write(cx, buf),
             #[cfg(feature = "custom-transport")]
             GrpcStreamInner::Custom(stream) => Pin::new(stream).poll_write(cx, buf),
         }
@@ -94,6 +107,8 @@ impl Write for GrpcStream {
         match &mut self.get_mut().inner {
             #[cfg(feature = "unix-transport")]
             GrpcStreamInner::Unix(stream) => Pin::new(stream).poll_flush(cx),
+            #[cfg(feature = "vsock-transport")]
+            GrpcStreamInner::Vsock(stream) => Pin::new(stream).poll_flush(cx),
             #[cfg(feature = "custom-transport")]
             GrpcStreamInner::Custom(stream) => Pin::new(stream).poll_flush(cx),
         }
@@ -110,6 +125,8 @@ impl Write for GrpcStream {
         match &mut self.get_mut().inner {
             #[cfg(feature = "unix-transport")]
             GrpcStreamInner::Unix(stream) => Pin::new(stream).poll_shutdown(cx),
+            #[cfg(feature = "vsock-transport")]
+            GrpcStreamInner::Vsock(stream) => Pin::new(stream).poll_shutdown(cx),
             #[cfg(feature = "custom-transport")]
             GrpcStreamInner::Custom(stream) => Pin::new(stream).poll_shutdown(cx),
         }

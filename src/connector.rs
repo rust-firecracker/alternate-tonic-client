@@ -6,7 +6,7 @@ use std::{
 use http::Uri;
 use tower::{BoxError, Service};
 
-use crate::{BoxFuture, stream::GrpcStream};
+use crate::{BoxResultFuture, stream::GrpcStream};
 
 pub struct GrpcConnectorBuilder {
     timeout: Option<Duration>,
@@ -27,6 +27,11 @@ impl GrpcConnectorBuilder {
     #[cfg(feature = "unix-transport")]
     pub fn build_to_unix_socket<P: Into<std::path::PathBuf>>(self, socket_path: P) -> GrpcConnector {
         self.build(GrpcConnectorInner::Unix(std::sync::Arc::new(socket_path.into())))
+    }
+
+    #[cfg(feature = "vsock-transport")]
+    pub fn build_to_vsock_socket(self, cid: u32, port: u32) -> GrpcConnector {
+        self.build(GrpcConnectorInner::Vsock(cid, port))
     }
 
     #[cfg(feature = "custom-transport")]
@@ -60,6 +65,8 @@ pub struct GrpcConnector {
 enum GrpcConnectorInner {
     #[cfg(feature = "unix-transport")]
     Unix(std::sync::Arc<std::path::PathBuf>),
+    #[cfg(feature = "vsock-transport")]
+    Vsock(u32, u32),
     #[cfg(feature = "custom-transport")]
     Custom(tower::util::BoxCloneSyncService<Uri, GrpcStream, BoxError>),
 }
@@ -69,7 +76,7 @@ impl Service<Uri> for GrpcConnector {
 
     type Error = BoxError;
 
-    type Future = BoxFuture<GrpcStream>;
+    type Future = BoxResultFuture<GrpcStream>;
 
     fn poll_ready(
         &mut self,
@@ -78,6 +85,8 @@ impl Service<Uri> for GrpcConnector {
         match self.inner {
             #[cfg(feature = "unix-transport")]
             GrpcConnectorInner::Unix(_) => Poll::Ready(Ok(())),
+            #[cfg(feature = "vsock-transport")]
+            GrpcConnectorInner::Vsock(_, _) => Poll::Ready(Ok(())),
             #[cfg(feature = "custom-transport")]
             GrpcConnectorInner::Custom(ref mut service) => service.poll_ready(cx),
         }
@@ -99,6 +108,11 @@ impl Service<Uri> for GrpcConnector {
                         Ok(GrpcStream::unix(stream))
                     })
                 }
+                #[cfg(feature = "vsock-transport")]
+                GrpcConnectorInner::Vsock(cid, port) => Box::pin(async move {
+                    let stream = tokio_vsock::VsockStream::connect(tokio_vsock::VsockAddr::new(cid, port)).await?;
+                    Ok(GrpcStream::vsock(stream))
+                }) as BoxResultFuture<GrpcStream>,
                 #[cfg(feature = "custom-transport")]
                 GrpcConnectorInner::Custom(ref mut service) => service.call(uri),
             };

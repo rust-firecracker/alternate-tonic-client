@@ -12,7 +12,7 @@ use hyper_util::{
 use tonic::body::Body;
 use tower::{BoxError, Service};
 
-use crate::{BoxFuture, GrpcConnector, channel::set_request_uri_scheme_and_authority};
+use crate::{BoxResultFuture, GrpcConnector, channel::set_request_uri_scheme_and_authority};
 
 #[derive(Debug, Clone)]
 pub struct PooledGrpcChannelBuilder {
@@ -55,7 +55,7 @@ impl Service<Request<Body>> for PooledGrpcChannel {
 
     type Error = BoxError;
 
-    type Future = BoxFuture<Response<Incoming>>;
+    type Future = BoxResultFuture<Response<Incoming>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.client.poll_ready(cx).map_err(|err| Box::new(err) as BoxError)

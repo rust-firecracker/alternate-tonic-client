@@ -10,4 +10,5 @@ pub use channel::*;
 pub use connector::{GrpcConnector, GrpcConnectorBuilder};
 pub use stream::GrpcStream;
 
-type BoxFuture<O> = Pin<Box<dyn Future<Output = Result<O, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static>>;
+type BoxResultFuture<O> =
+    Pin<Box<dyn Future<Output = Result<O, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static>>;
