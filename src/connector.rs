@@ -4,26 +4,29 @@ use std::{
 };
 
 use http::Uri;
-use tower::{BoxError, Service};
+use tower::{BoxError, Service, ServiceExt};
 
 use crate::{BoxResultFuture, stream::GrpcStream};
 
+/// A builder for a [GrpcConnector].
 pub struct GrpcConnectorBuilder {
     timeout: Option<Duration>,
 }
 
 impl GrpcConnectorBuilder {
+    /// Create a new [GrpcConnectorBuilder].
     pub fn new() -> Self {
         Self { timeout: None }
     }
-}
 
-impl GrpcConnectorBuilder {
+    /// Set a timeout [Duration] for all connection attempts made via the [GrpcConnector].
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
+    /// Build a [GrpcConnector] that performs DNS resolution of a given [Uri] to an IP and connects to that
+    /// IP over TCP without using TLS.
     #[cfg(feature = "dns-tcp-transport")]
     pub fn build_to_tcp_host(
         self,
@@ -37,6 +40,8 @@ impl GrpcConnectorBuilder {
         ))
     }
 
+    /// Build a [GrpcConnector] that performs DNS resolution of a given [Uri] to an IP and connects to that
+    /// IP over TCP with TLS.
     #[cfg(feature = "dns-tcp-tls-transport")]
     pub fn build_to_tcp_host_with_tls(
         self,
@@ -59,24 +64,30 @@ impl GrpcConnectorBuilder {
         self.build(GrpcConnectorInner::DnsTcpTls(uri, connector))
     }
 
+    /// Build a [GrpcConnector] that connects to the Unix socket located at the given path.
     #[cfg(feature = "unix-transport")]
     pub fn build_to_unix_socket<P: Into<std::path::PathBuf>>(self, socket_path: P) -> GrpcConnector {
         self.build(GrpcConnectorInner::Unix(std::sync::Arc::new(socket_path.into())))
     }
 
+    /// Build a [GrpcConnector] that connects to a virtio-vsock socket identified by the given CID and port.
     #[cfg(feature = "vsock-transport")]
     pub fn build_to_vsock_socket(self, cid: u32, port: u32) -> GrpcConnector {
         self.build(GrpcConnectorInner::Vsock(cid, port))
     }
 
+    /// Build a [GrpcConnector] that connects via a custom tower [Service]. This [Service] must accept `()` as
+    /// a request, return a [GrpcStream] (initialized via either [GrpcStream::wrap_hyper_io] or [GrpcStream::wrap_tokio_io])
+    /// as a response and emit an error that is convertible into a boxed type-erased [std::error::Error].
     #[cfg(feature = "custom-transport")]
     pub fn build_custom<S>(self, service: S) -> GrpcConnector
     where
-        S: Service<(), Response = GrpcStream, Error = BoxError> + Send + Sync + Clone + 'static,
+        S: Service<(), Response = GrpcStream> + Send + Sync + Clone + 'static,
+        S::Error: Into<BoxError>,
         S::Future: Send,
     {
         self.build(GrpcConnectorInner::Custom(tower::util::BoxCloneSyncService::new(
-            service,
+            service.map_err(|err| err.into()),
         )))
     }
 
@@ -89,6 +100,10 @@ impl GrpcConnectorBuilder {
     }
 }
 
+/// A [Service] used to connect to a gRPC server, yielding a [GrpcStream].
+/// An instance of a [GrpcConnector] is built via a [GrpcConnectorBuilder] and is cheaply [Clone]-able.
+/// For technical reasons, this [Service] accepts [Uri] as its request type yet actually always ignores its value
+/// regardless of which transport is being used.
 #[derive(Debug, Clone)]
 pub struct GrpcConnector {
     inner: GrpcConnectorInner,

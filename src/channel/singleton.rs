@@ -86,6 +86,7 @@ impl tower::Service<()> for SingletonConnectService {
     }
 }
 
+/// A builder for a [SingletonGrpcChannel].
 #[derive(Debug, Clone)]
 pub struct SingletonGrpcChannelBuilder {
     buffer_size: usize,
@@ -94,6 +95,8 @@ pub struct SingletonGrpcChannelBuilder {
 }
 
 impl SingletonGrpcChannelBuilder {
+    /// Create a new [SingletonGrpcChannelBuilder] from the size of the buffer used for sending requests
+    /// to the future underlying service running on a background [tokio] task.
     pub fn new(buffer_size: usize) -> Self {
         Self {
             buffer_size,
@@ -102,11 +105,14 @@ impl SingletonGrpcChannelBuilder {
         }
     }
 
+    /// Set options on the [hyper] HTTP/2 connection builder via a function taking a mutable reference to the
+    /// builder. HTTP/2 connection options can be customized this way via [hyper]'s low-level client API.
     pub fn configure_http2_connection<F: FnOnce(&mut Http2ConnectionBuilder)>(mut self, function: F) -> Self {
         function(&mut self.connection_builder);
         self
     }
 
+    /// Set a timeout [Duration] for all requests performed on the resulting [SingletonGrpcChannel].
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -130,6 +136,11 @@ impl SingletonGrpcChannelBuilder {
     }
 }
 
+/// A gRPC channel [Service] compatible with [tonic] that is backed by a buffer used for sending requests to a [tokio]
+/// background task running a singular reconnecting HTTP/2 connection. This behavior is similar to that of the built-in channel
+/// implementation in [tonic]. In most cases, HTTP/2 connection pooling is desired instead of relying on a single HTTP/2 connection,
+/// but this channel covers the latter use-case. To use this channel with [tonic] for performing requests, create a
+/// [tonic::client::Grpc] instance wrapping it or a code-generated client struct wrapping it.
 #[derive(Debug, Clone)]
 pub struct SingletonGrpcChannel {
     buffer: BoxCloneSyncService<Request<Body>, Response<Incoming>, BoxError>,

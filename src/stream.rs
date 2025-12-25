@@ -8,11 +8,16 @@ use hyper::rt::{Read, Write};
 use hyper_util::client::legacy::connect::{Connected, Connection};
 
 #[cfg(feature = "custom-transport")]
-trait HyperIo: hyper::rt::Read + hyper::rt::Write + Unpin + Send {}
+trait HyperIo: Read + Write + Unpin + Send {}
 
 #[cfg(feature = "custom-transport")]
-impl<S> HyperIo for S where S: hyper::rt::Read + hyper::rt::Write + Unpin + Send {}
+impl<S> HyperIo for S where S: Read + Write + Unpin + Send {}
 
+/// A successfully established gRPC connection running over a certain transport.
+/// To integrate with [tonic]'s client-side stack, [GrpcStream] implements [hyper]'s I/O traits:
+/// [Read] and [Write]. When compiling the crate with support for a pooled
+/// gRPC channel, [GrpcStream] also implements various traits specific to [hyper_util]'s connection
+/// pool implementation, though this is an internal detail that is up to change.
 pub struct GrpcStream {
     #[cfg_attr(not(feature = "_transport"), allow(unused))]
     inner: GrpcStreamInner,
@@ -32,13 +37,17 @@ enum GrpcStreamInner {
 }
 
 impl GrpcStream {
+    /// Create a custom [GrpcStream] that wraps an [Unpin] [Send] type that implements [hyper]'s I/O traits:
+    /// [Read] and [Write].
     #[cfg(feature = "custom-transport")]
-    pub fn wrap_hyper_io<IO: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static>(io: IO) -> Self {
+    pub fn wrap_hyper_io<IO: Read + Write + Unpin + Send + 'static>(io: IO) -> Self {
         Self {
             inner: GrpcStreamInner::Custom(Box::new(io)),
         }
     }
 
+    /// Create a custom [GrpcStream] that wraps an [Unpin] [Send] type that implements [tokio]'s I/O traits:
+    /// [tokio::io::AsyncRead] and [tokio::io::AsyncWrite].
     #[cfg(feature = "custom-transport")]
     pub fn wrap_tokio_io<IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static>(io: IO) -> Self {
         Self::wrap_hyper_io(hyper_util::rt::tokio::WithHyperIo::new(io))

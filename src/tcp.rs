@@ -7,13 +7,15 @@ use hyper_util::client::legacy::connect::HttpConnector;
 
 use crate::dns::DnsResolver;
 
-#[derive(Debug, Clone, Copy, Default)]
+/// Keepalive options for a TCP connection.
+#[derive(Debug, Clone, Copy)]
 pub struct TcpKeepaliveConfig {
     pub duration: Duration,
     pub interval: Duration,
     pub retries: u32,
 }
 
+/// One or multiple IPv4 and/or IPv6 local addresses to use for a TCP connection.
 #[derive(Debug, Clone, Copy)]
 pub enum TcpLocalAddress {
     V4(Ipv4Addr),
@@ -21,6 +23,8 @@ pub enum TcpLocalAddress {
     Both(Ipv4Addr, Ipv6Addr),
 }
 
+/// Configuration for TCP connections. This struct is cheaply [Clone]-able and implements [Default],
+/// as all its settings are optional.
 #[derive(Debug, Clone, Default)]
 pub struct TcpConfig {
     pub keepalive: Option<TcpKeepaliveConfig>,

@@ -3,8 +3,6 @@ mod channel;
 mod connector;
 mod stream;
 
-use std::pin::Pin;
-
 #[cfg(feature = "_channel")]
 pub use channel::*;
 pub use connector::*;
@@ -26,4 +24,4 @@ mod tls;
 pub use tls::*;
 
 type BoxResultFuture<O> =
-    Pin<Box<dyn Future<Output = Result<O, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static>>;
+    std::pin::Pin<Box<dyn Future<Output = Result<O, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static>>;
