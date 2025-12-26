@@ -1,9 +1,9 @@
-#[cfg(feature = "_channel")]
+#[cfg(feature = "__channel")]
 mod channel;
 mod connector;
 mod stream;
 
-#[cfg(feature = "_channel")]
+#[cfg(feature = "__channel")]
 pub use channel::*;
 pub use connector::*;
 pub use stream::GrpcStream;

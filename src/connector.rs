@@ -8,22 +8,42 @@ use http::Uri;
 use tower::ServiceExt;
 use tower::{BoxError, Service};
 
+#[cfg(feature = "__transport")]
+use crate::stream::GrpcStreamInner;
 use crate::{BoxResultFuture, stream::GrpcStream};
 
 /// A builder for a [GrpcConnector].
+#[derive(Debug, Clone)]
 pub struct GrpcConnectorBuilder {
     timeout: Option<Duration>,
+    #[cfg(feature = "firecracker-handshake")]
+    firecracker_handshake_port: Option<u32>,
 }
 
 impl GrpcConnectorBuilder {
     /// Create a new [GrpcConnectorBuilder].
     pub fn new() -> Self {
-        Self { timeout: None }
+        Self {
+            timeout: None,
+            #[cfg(feature = "firecracker-handshake")]
+            firecracker_handshake_port: None,
+        }
     }
 
     /// Set a timeout [Duration] for all connection attempts made via the [GrpcConnector].
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// Configure a Firecracker virtio-vsock handshake to the given guest port to be performed as part of the connection process.
+    /// Trying to build a [GrpcConnector] with the DNS/TCP/TLS transport and a Firecracker handshake enabled will result in a panic
+    /// in a debug build, and the handshake configuration will be silently ignored in a release build. Usually, this feature is used
+    /// in combination with the Unix transport, as Firecracker uses Unix sockets on the host, but it can be combined with all other
+    /// transports (except for DNS/TCP/TLS).
+    #[cfg(feature = "firecracker-handshake")]
+    pub fn perform_firecracker_handshake(mut self, port: u32) -> Self {
+        self.firecracker_handshake_port = Some(port);
         self
     }
 
@@ -52,6 +72,12 @@ impl GrpcConnectorBuilder {
         tcp_config: crate::tcp::TcpConfig,
         tls_config: crate::tls::TlsConfig,
     ) -> GrpcConnector {
+        #[cfg(feature = "firecracker-handshake")]
+        debug_assert!(
+            self.firecracker_handshake_port.is_none(),
+            "Firecracker handshake support in the alternate-tonic-client crate cannot be combined with the DNS/TCP/TLS transport."
+        );
+
         let connector = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(tls_config.config);
 
         let connector = match tls_config.require_tls {
@@ -93,11 +119,13 @@ impl GrpcConnectorBuilder {
         )))
     }
 
-    #[cfg(feature = "_transport")]
+    #[cfg(feature = "__transport")]
     fn build(self, inner: GrpcConnectorInner) -> GrpcConnector {
         GrpcConnector {
             inner,
             timeout: self.timeout,
+            #[cfg(feature = "firecracker-handshake")]
+            firecracker_handshake_port: self.firecracker_handshake_port,
         }
     }
 }
@@ -109,8 +137,10 @@ impl GrpcConnectorBuilder {
 #[derive(Debug, Clone)]
 pub struct GrpcConnector {
     inner: GrpcConnectorInner,
-    #[cfg_attr(not(feature = "_transport"), allow(unused))]
+    #[cfg_attr(not(feature = "__transport"), allow(unused))]
     timeout: Option<Duration>,
+    #[cfg(feature = "firecracker-handshake")]
+    firecracker_handshake_port: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,21 +191,28 @@ impl Service<Uri> for GrpcConnector {
     }
 
     fn call(&mut self, _uri: Uri) -> Self::Future {
-        #[cfg(not(feature = "_transport"))]
+        #[cfg(not(feature = "__transport"))]
         panic!("alternate-tonic-client crate had no transport feature enabled at runtime");
 
-        #[cfg(feature = "_transport")]
+        #[cfg(feature = "__transport")]
         {
+            #[cfg(feature = "firecracker-handshake")]
+            let firecracker_handshake_port = self.firecracker_handshake_port;
+
             let future: BoxResultFuture<GrpcStream> = match self.inner {
                 #[cfg(feature = "dns-tcp-transport")]
                 GrpcConnectorInner::DnsTcp(ref uri, ref mut connector) => {
                     let future = connector.call(uri.clone());
 
                     Box::pin(async move {
-                        future
-                            .await
-                            .map(GrpcStream::dns_tcp)
-                            .map_err(|err| Box::new(err) as BoxError)
+                        #[cfg_attr(not(feature = "firecracker-handshake"), allow(unused_mut))]
+                        let mut stream = future.await?;
+                        #[cfg(feature = "firecracker-handshake")]
+                        perform_firecracker_handshake(firecracker_handshake_port, stream.inner_mut()).await?;
+
+                        Ok(GrpcStream {
+                            inner: GrpcStreamInner::DnsTcp(stream),
+                        })
                     })
                 }
                 #[cfg(feature = "dns-tcp-tls-transport")]
@@ -188,21 +225,49 @@ impl Service<Uri> for GrpcConnector {
                     let socket_path = socket_path.clone();
 
                     Box::pin(async move {
-                        tokio::net::UnixStream::connect(socket_path.as_ref())
-                            .await
-                            .map(GrpcStream::unix)
-                            .map_err(|err| Box::new(err) as BoxError)
+                        #[cfg_attr(not(feature = "firecracker-handshake"), allow(unused_mut))]
+                        let mut stream = tokio::net::UnixStream::connect(socket_path.as_ref()).await?;
+                        #[cfg(feature = "firecracker-handshake")]
+                        perform_firecracker_handshake(firecracker_handshake_port, &mut stream).await?;
+
+                        Ok(GrpcStream {
+                            inner: GrpcStreamInner::Unix(hyper_util::rt::tokio::WithHyperIo::new(stream)),
+                        })
                     })
                 }
                 #[cfg(feature = "vsock-transport")]
                 GrpcConnectorInner::Vsock(cid, port) => Box::pin(async move {
-                    tokio_vsock::VsockStream::connect(tokio_vsock::VsockAddr::new(cid, port))
-                        .await
-                        .map(GrpcStream::vsock)
-                        .map_err(|err| Box::new(err) as BoxError)
+                    #[cfg_attr(not(feature = "firecracker-handshake"), allow(unused_mut))]
+                    let mut stream = tokio_vsock::VsockStream::connect(tokio_vsock::VsockAddr::new(cid, port)).await?;
+                    #[cfg(feature = "firecracker-handshake")]
+                    perform_firecracker_handshake(firecracker_handshake_port, &mut stream).await?;
+
+                    Ok(GrpcStream {
+                        inner: GrpcStreamInner::Vsock(hyper_util::rt::tokio::WithHyperIo::new(stream)),
+                    })
                 }),
                 #[cfg(feature = "custom-transport")]
-                GrpcConnectorInner::Custom(ref mut service) => service.call(()),
+                GrpcConnectorInner::Custom(ref mut service) => {
+                    #[cfg(feature = "firecracker-handshake")]
+                    {
+                        let future = service.call(());
+
+                        Box::pin(async move {
+                            let mut stream = future.await?;
+
+                            perform_firecracker_handshake(
+                                firecracker_handshake_port,
+                                &mut hyper_util::rt::tokio::WithTokioIo::new(&mut stream),
+                            )
+                            .await?;
+
+                            Ok(stream)
+                        })
+                    }
+
+                    #[cfg(not(feature = "firecracker-handshake"))]
+                    service.call(())
+                }
             };
 
             match self.timeout {
@@ -216,4 +281,38 @@ impl Service<Uri> for GrpcConnector {
             }
         }
     }
+}
+
+#[cfg(feature = "firecracker-handshake")]
+async fn perform_firecracker_handshake<IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send>(
+    port: Option<u32>,
+    io: &mut IO,
+) -> Result<(), std::io::Error> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let Some(port) = port else {
+        return Ok(());
+    };
+
+    io.write_all(format!("CONNECT {port}\n").as_bytes()).await?;
+
+    let mut lines = BufReader::new(io).lines();
+    match lines.next_line().await {
+        Ok(Some(line)) => {
+            if !line.starts_with("OK") {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "Firecracker refused to establish a tunnel to the given guest port",
+                ));
+            }
+        }
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Could not read Firecracker response",
+            ));
+        }
+    };
+
+    Ok(())
 }
